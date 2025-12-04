@@ -1,0 +1,36 @@
+# File: AUDIT_REPORT_TEMPLATE.json
+
+```jsonc
+{
+  "audit_timestamp": "<ISO‑8601 UTC timestamp>",
+  "issues": [
+    // Example entry
+    // {
+    //   "id": "0001",
+    //   "type": "UNWIRED_COMPONENT",
+    //   "file": "src/Components/SaveVersionModal.tsx",
+    //   "line": 345,
+    //   "description": "Submit button has onClick={null} — no handler defined.",
+    //   "severity": "HIGH",
+    //   "recommendation": "Implement saveVersion() handler or connect to context API."
+    // }
+  ],
+  "summary": {
+    "total": 0,
+    "by_severity": {
+      "CRITICAL": 0,
+      "HIGH": 0,
+      "MEDIUM": 0,
+      "LOW": 0
+    },
+    "by_type": {
+      "UNWIRED_COMPONENT": 0,
+      "INCOMPLETE_LOGIC": 0,
+      "DATA_BINDING_GAP": 0,
+      "DEPENDENCY_UNUSED": 0,
+      // other types ...
+    }
+  },
+  "notes": []
+}
+```
