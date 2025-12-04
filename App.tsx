@@ -23,6 +23,12 @@ import { Workbench } from './Components/Workbench.tsx';
 import { DebugInput } from './Components/DebugInput.tsx';
 import { CURRENT_SESSION_VERSION } from './constants.ts';
 import { HelpModal } from './Components/HelpModal.tsx';
+import ErrorBoundary from './Components/ErrorBoundary.tsx';
+
+const MAX_UPLOAD_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_UPLOAD_FILE_SIZE_MB = Math.round(MAX_UPLOAD_FILE_SIZE_BYTES / (1024 * 1024));
+const MAX_ATTACHMENT_COUNT = 10;
+const MAX_PROJECT_FILES = 50;
 
 const App: React.FC = () => {
   const { 
@@ -37,7 +43,7 @@ const App: React.FC = () => {
   const { versions, projectFiles, setProjectFiles, setVersions, setImportedSessions } = usePersistenceContext();
   
   const { isLoading, isChatLoading, isGeneratingReport } = useLoadingStateContext();
-  const { isInputPanelVisible, isChatMode, chatHistory, chatRevisions, chatFiles, contextFileIds, setAttachments, setIsInputPanelVisible } = useChatStateContext();
+  const { isInputPanelVisible, isChatMode, chatHistory, chatRevisions, chatFiles, contextFileIds, attachments, setAttachments, setIsInputPanelVisible } = useChatStateContext();
   const { 
     showOutputPanel, reviewFeedback, revisedCode, reviewedCode, featureMatrix, rawFeatureMatrixJson, 
     finalizationSummary, finalizationBriefing, adversarialReportContent, fullCodeForReview, outputType,
@@ -207,6 +213,14 @@ const App: React.FC = () => {
             processImportedSessionFile(result, file.name);
         }
     };
+    reader.onerror = () => {
+        const message = reader.error?.message || 'Unknown file read error.';
+        console.error("Failed to import session file:", reader.error);
+        addToast(`Failed to read file: ${message}`, "error");
+    };
+    reader.onabort = () => {
+        addToast("File reading was aborted.", "error");
+    };
     reader.readAsText(file);
   };
 
@@ -319,9 +333,37 @@ const App: React.FC = () => {
     const handleAttachmentsChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const files = event.target.files;
         if (!files) return;
+        const selectedFiles = Array.from(files);
+        const oversizeFiles = selectedFiles.filter(file => file.size > MAX_UPLOAD_FILE_SIZE_BYTES);
+        const availableSlots = Math.max(MAX_ATTACHMENT_COUNT - attachments.length, 0);
+        const overCount = Math.max(selectedFiles.length - availableSlots, 0);
+
+        if (availableSlots === 0) {
+            addToast(`Attachment limit reached (${MAX_ATTACHMENT_COUNT}). Remove a file before adding more.`, "error");
+            event.target.value = '';
+            return;
+        }
+
+        if (oversizeFiles.length > 0) {
+            addToast(`Some files exceed the ${MAX_UPLOAD_FILE_SIZE_MB}MB limit and were skipped.`, "error");
+        }
+
+        if (overCount > 0) {
+            addToast(`Only ${availableSlots} attachment slot(s) available; ${overCount} file(s) were skipped.`, "error");
+        }
+
+        const filesWithinLimits = selectedFiles
+            .filter(file => file.size <= MAX_UPLOAD_FILE_SIZE_BYTES)
+            .slice(0, availableSlots);
+
+        if (filesWithinLimits.length === 0) {
+            event.target.value = '';
+            return;
+        }
+
         try {
             const newAttachments = await Promise.all(
-                Array.from(files).map(async (file: File) => {
+                filesWithinLimits.map(async (file: File) => {
                     const { content, mimeType } = await fileToContent(file);
                     return { file, content, mimeType };
                 })
@@ -331,10 +373,22 @@ const App: React.FC = () => {
         } catch (error) {
             console.error("Failed to read attachments:", error);
             addToast("Failed to read one or more files.", "error");
+        } finally {
+            event.target.value = '';
         }
     };
-  
+
     const handleUploadProjectFile = async (file: File) => {
+        if (projectFiles.length >= MAX_PROJECT_FILES) {
+            addToast(`Project file limit reached (${MAX_PROJECT_FILES}). Delete a file before uploading new ones.`, "error");
+            return;
+        }
+
+        if (file.size > MAX_UPLOAD_FILE_SIZE_BYTES) {
+            addToast(`File "${file.name}" exceeds the ${MAX_UPLOAD_FILE_SIZE_MB}MB limit.`, "error");
+            return;
+        }
+
         try {
             const { content, mimeType } = await fileToContent(file);
             setProjectFiles(prev => [{ id: `proj_${Date.now()}_${file.name}`, name: file.name, content, mimeType, timestamp: Date.now() }, ...prev]);
@@ -429,7 +483,8 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="h-screen flex flex-col relative">
+    <ErrorBoundary>
+      <div className="h-screen flex flex-col relative">
       <div className="fixed top-1/4 left-8 w-1/4 h-px bg-[var(--hud-color-darker)] opacity-50"></div>
       <div className="fixed bottom-1/4 right-8 w-1/4 h-px bg-[var(--hud-color-darker)] opacity-50"></div>
       <div className="fixed top-1/2 right-12 w-px h-1/4 bg-[var(--hud-color-darker)] opacity-50"></div>
@@ -512,8 +567,15 @@ const App: React.FC = () => {
               setVersionName={setVersionName}
               onAutoGenerate={async () => {
                 setIsGeneratingName(true);
-                await handleAutoGenerateVersionName(isSavingChat, setVersionName);
-                setIsGeneratingName(false);
+                try {
+                  await handleAutoGenerateVersionName(isSavingChat, setVersionName);
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : 'Failed to auto-generate version name.';
+                  console.error('Auto-generation failed:', error);
+                  addToast(message, 'error');
+                } finally {
+                  setIsGeneratingName(false);
+                }
               }}
               isGeneratingName={isGeneratingName}
               outputType={outputType}
@@ -581,7 +643,8 @@ const App: React.FC = () => {
         isOpen={isHelpModalOpen}
         onClose={() => setIsHelpModalOpen(false)}
       />
-    </div>
+      </div>
+    </ErrorBoundary>
   );
 };
 
